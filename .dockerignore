@@ -1,0 +1,17 @@
+# Never send these into an image build: personal data, secrets, host-built native modules.
+**/node_modules
+data
+.env
+.env.*
+!.env.example
+*.bak
+*.mdf
+*.ldf
+.git
+.githooks
+e2e/*
+!e2e/package.json
+**/test-results
+**/dist
+live-extract
+reverse-engineering

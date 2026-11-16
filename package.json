@@ -1,0 +1,19 @@
+{
+  "name": "pips-website",
+  "private": true,
+  "description": "PIPS API, database migration, and local infrastructure.",
+  "scripts": {
+    "dev": "pnpm --filter @pips/server dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @pips/server prisma migrate dev",
+    "migrate": "pnpm --filter @pips/migration migrate",
+    "up": "docker compose -f infra/docker-compose.yml --env-file .env up -d",
+    "up:legacy": "docker compose -f infra/docker-compose.yml --env-file .env --profile legacy up -d",
+    "down": "docker compose -f infra/docker-compose.yml --env-file .env down"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.21.0"
+}

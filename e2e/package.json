@@ -1,0 +1,13 @@
+{
+  "name": "@pips/e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser smoke tests (read-only: nothing is submitted)",
+  "scripts": {
+    "test": "playwright test",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}

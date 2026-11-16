@@ -1,0 +1,31 @@
+{
+  "name": "@pips/migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One-way, re-runnable import of the legacy DotNetNuke site (read-only) into the PIPS PostgreSQL database and file storage",
+  "scripts": {
+    "migrate": "tsx --env-file=../.env src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bmp-js": "^0.1.0",
+    "he": "^1.2.0",
+    "heic-convert": "^2.1.0",
+    "mssql": "^11.0.1",
+    "sanitize-html": "^2.18.0",
+    "sharp": "^0.34.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/he": "^1.2.3",
+    "@types/mssql": "^9.1.7",
+    "@types/node": "^22.13.10",
+    "@types/sanitize-html": "^2.16.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

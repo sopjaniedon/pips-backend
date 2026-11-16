@@ -1,0 +1,76 @@
+# Local development stack. Every port is bound to 127.0.0.1 only: the database holds real personal data.
+# Usage (from repo root):  pnpm up            -> postgres + mailpit + api
+#                          pnpm up:legacy     -> also the read-only legacy DNN database (SQL Server, restored from the .bak)
+name: pips
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5440}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"   # web UI
+      - "127.0.0.1:1025:1025"   # SMTP (capture only — nothing leaves this machine)
+
+  api:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      STORAGE_DIR: /data/storage
+      WEB_DIR: /app/web
+      HOST: 0.0.0.0
+      PORT: "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ../data/storage:/data/storage
+      - ../web:/app/web:ro
+
+  # Legacy DotNetNuke database, restored READ-ONLY from the .bak for the migration.
+  legacy-mssql:
+    profiles: ["legacy"]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${LEGACY_SA_PASSWORD}
+      LEGACY_READER_PASSWORD: ${LEGACY_READER_PASSWORD}
+      LEGACY_BAK_FILE: ${LEGACY_BAK_FILE}
+    entrypoint: ["/bin/bash", "/restore.sh"]
+    ports:
+      - "127.0.0.1:${LEGACY_MSSQL_PORT:-14334}:1433"
+    volumes:
+      - ${LEGACY_BAK_DIR}:/bak:ro
+      - ./mssql/restore.sh:/restore.sh:ro
+      - legacydata:/var/opt/mssql
+
+volumes:
+  pgdata:
+  legacydata:

@@ -1,0 +1,42 @@
+# Local tooling and working files
+.claude/
+.playwright/
+.impeccable/
+skills-lock.json
+*.zip
+.DS_Store
+
+# Client source material and research (kept local, not part of the design deliverable)
+pips-images/
+research/
+
+# Browser-test output
+.playwright-cli/
+**/.playwright-cli/
+
+# Real PIPS applicant data extracted read-only from pips-ks.org — LOCAL ONLY, never commit
+web/admin/live-data.js
+live-extract/
+reverse-engineering/img/
+**/live-data.js
+
+# ---- Backend: data, secrets and legacy material are NEVER committed ----
+data/
+.env
+.env.*
+!.env.example
+*.bak
+*.mdf
+*.ldf
+*.dump
+*.sql.gz
+migration/reports/
+e2e/.artifacts/
+node_modules/
+dist/
+coverage/
+.pnpm-store/
+
+# Playwright output
+e2e/test-results/
+e2e/playwright-report/

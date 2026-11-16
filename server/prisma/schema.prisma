@@ -1,0 +1,632 @@
+// PIPS database schema.
+// Parity with the legacy DotNetNuke site (see docs/backend-plan.md). Every imported row keeps its legacy id.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Extensions unaccent, pg_trgm and citext are created by infra/postgres/init.sql
+}
+
+enum Lang {
+  sq
+  en
+  sr
+}
+
+// ───────────────────────────── Auth ─────────────────────────────
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  legacyId     Int?       @unique
+  username     String     @unique
+  email        String     @unique @db.Citext
+  firstName    String     @default("")
+  lastName     String     @default("")
+  displayName  String
+  passwordHash String? // argon2id; legacy DNN hashes are never migrated
+  status       UserStatus @default(INVITED)
+  isSuperUser  Boolean    @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  roles        UserRole[]
+  sessions     Session[]
+  resetTokens  PasswordResetToken[]
+  articles     Article[]            @relation("ArticleAuthor")
+  auditEntries AuditLog[]
+}
+
+model Role {
+  id          Int              @id @default(autoincrement())
+  key         String           @unique // administrator | editor | translator_en
+  name        String
+  legacyId    Int?             @unique
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model UserRole {
+  userId Int
+  roleId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId     Int
+  permission String
+  role       Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permission])
+}
+
+model Session {
+  id         String   @id // sha256 of the opaque cookie token
+  userId     Int
+  csrfToken  String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  ip         String?
+  userAgent  String?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Content (EasyDNNNews parity) ─────────────────────────────
+
+enum ArticleStatus {
+  PUBLISHED
+  DRAFT
+}
+
+enum DetailType {
+  TEXT // normal article with a detail page
+  NONE // list-only item, no detail page
+  LINK // list item linking to an external URL
+}
+
+model Category {
+  id           Int                   @id @default(autoincrement())
+  legacyId     Int?                  @unique
+  parentId     Int?
+  position     Int                   @default(0)
+  isActive     Boolean               @default(true)
+  color        String?
+  parent       Category?             @relation("CategoryTree", fields: [parentId], references: [id])
+  children     Category[]            @relation("CategoryTree")
+  translations CategoryTranslation[]
+  articles     ArticleCategory[]
+}
+
+model CategoryTranslation {
+  categoryId  Int
+  lang        Lang
+  name        String
+  slug        String
+  description String?
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, lang])
+}
+
+model Program {
+  id           Int                  @id @default(autoincrement())
+  legacyId     Int?                 @unique // EasyDNNfieldsMultiElements.FieldElementID
+  key          String               @unique
+  position     Int                  @default(0)
+  translations ProgramTranslation[]
+  articles     ArticleProgram[]
+}
+
+model ProgramTranslation {
+  programId Int
+  lang      Lang
+  name      String
+  program   Program @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@id([programId, lang])
+}
+
+model Article {
+  id                Int           @id @default(autoincrement())
+  legacyId          Int?          @unique
+  status            ArticleStatus @default(DRAFT)
+  publishAt         DateTime
+  expireAt          DateTime?
+  featured          Boolean       @default(false) // drives the home slider
+  detailType        DetailType    @default(TEXT)
+  linkUrl           String?
+  linkTarget        String? // _blank | _self
+  coverFileId       Int?
+  legacyCoverPath   String? // resolved to coverFileId by the file import (P2)
+  showCover         Boolean       @default(true)
+  showGallery       Boolean       @default(true)
+  publicationYear   Int?
+  analyticalType    String? // set => also listed under Research
+  hideDefaultLocale Boolean       @default(false)
+  viewCount         Int           @default(0)
+  authorId          Int?
+  legacyGalleryId   Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @default(now())
+  deletedAt         DateTime?
+
+  author       User?                @relation("ArticleAuthor", fields: [authorId], references: [id])
+  cover        File?                @relation("ArticleCover", fields: [coverFileId], references: [id])
+  translations ArticleTranslation[]
+  categories   ArticleCategory[]
+  programs     ArticleProgram[]
+  documents    ArticleDocument[]
+  gallery      GalleryItem[]
+  revisions    ArticleRevision[]
+
+  @@index([status, publishAt])
+  @@index([featured])
+}
+
+model ArticleTranslation {
+  articleId        Int
+  lang             Lang
+  title            String
+  subtitle         String?
+  summary          String?
+  bodyHtml         String                   @default("")
+  bodyText         String                   @default("")
+  slug             String
+  legacySlug       String?
+  metaTitle        String?
+  metaDescription  String?
+  metaKeywords     String?
+  ogJson           Json?
+  coverTitle       String?
+  coverDescription String?
+  documentTitles   String                   @default("")
+  search           Unsupported("tsvector")? // maintained by trigger (see migration SQL)
+  updatedAt        DateTime                 @default(now())
+  article          Article                  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, lang])
+  @@index([lang, slug])
+}
+
+model ArticleCategory {
+  articleId  Int
+  categoryId Int
+  article    Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, categoryId])
+  @@index([categoryId])
+}
+
+model ArticleProgram {
+  articleId Int
+  programId Int
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  program   Program @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, programId])
+  @@index([programId])
+}
+
+model Document {
+  id            Int               @id @default(autoincrement())
+  legacyId      Int?              @unique
+  title         String?
+  description   String?
+  fileId        Int?
+  legacyPath    String
+  fileName      String
+  extension     String
+  size          BigInt            @default(0)
+  downloadCount Int               @default(0)
+  allLanguages  Boolean           @default(true)
+  visible       Boolean           @default(true)
+  openInNewTab  Boolean           @default(false)
+  uploadedAt    DateTime?
+  file          File?             @relation(fields: [fileId], references: [id])
+  articles      ArticleDocument[]
+}
+
+model ArticleDocument {
+  articleId  Int
+  documentId Int
+  position   Int      @default(0)
+  article    Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, documentId])
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+model GalleryItem {
+  id              Int       @id @default(autoincrement())
+  legacyId        Int?      @unique // EasyGalleryPictures.PictureID
+  articleId       Int?
+  legacyGalleryId Int?
+  position        Int       @default(0)
+  mediaType       MediaType @default(IMAGE)
+  fileId          Int?
+  legacyPath      String?
+  embedUrl        String?
+  title           String?
+  description     String?
+  visible         Boolean   @default(true)
+  isCoverCopy     Boolean   @default(false)
+  uploadedAt      DateTime?
+  article         Article?  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  file            File?     @relation(fields: [fileId], references: [id])
+
+  @@index([articleId, position])
+}
+
+enum RevisionSource {
+  LEGACY
+  APP
+}
+
+model ArticleRevision {
+  id          Int            @id @default(autoincrement())
+  articleId   Int
+  legacyId    Int?           @unique // EasyDNNNewsArchive.HistoryEntryID
+  source      RevisionSource @default(APP)
+  snapshot    Json
+  createdAt   DateTime       @default(now())
+  createdById Int?
+  article     Article        @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, createdAt])
+}
+
+// ───────────────────────────── Files ─────────────────────────────
+
+enum Bucket {
+  PUBLIC
+  PRIVATE
+}
+
+model File {
+  id           Int               @id @default(autoincrement())
+  bucket       Bucket
+  sha256       String
+  size         BigInt
+  mime         String
+  ext          String
+  originalName String
+  width        Int?
+  height       Int?
+  storageKey   String            @unique
+  createdAt    DateTime          @default(now())
+  variants     FileVariant[]
+  legacyPaths  LegacyPath[]
+  coverOf      Article[]         @relation("ArticleCover")
+  documents    Document[]
+  gallery      GalleryItem[]
+  answers      SubmissionValue[]
+
+  @@unique([bucket, sha256])
+}
+
+model FileVariant {
+  id         Int    @id @default(autoincrement())
+  fileId     Int
+  kind       String // w400 | w800 | w1600 | jpeg
+  mime       String
+  width      Int?
+  height     Int?
+  size       Int
+  storageKey String @unique
+  file       File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, kind])
+}
+
+model LegacyPath {
+  path         String  @id // NFC, lower-case, no ".resources"
+  originalPath String
+  fileId       Int?
+  found        Boolean @default(false)
+  file         File?   @relation(fields: [fileId], references: [id])
+}
+
+// ───────────────────────────── Pages & static text (DNN HTML module) ─────────────────────────────
+
+model HtmlBlock {
+  id             Int                 @id @default(autoincrement())
+  key            String // "m<legacyModuleId>" for imported blocks; page slots reference these keys
+  lang           Lang
+  html           String              @default("")
+  title          String?
+  pageKey        String? // route key of the legacy page (home, about, …); null for site-wide blocks
+  pane           String?
+  position       Int                 @default(0)
+  isLive         Boolean             @default(true)
+  legacyModuleId Int?
+  legacyTabId    Int?
+  updatedAt      DateTime            @default(now())
+  revisions      HtmlBlockRevision[]
+
+  @@unique([key, lang])
+  @@index([pageKey, lang])
+}
+
+model HtmlBlockRevision {
+  id           Int       @id @default(autoincrement())
+  blockId      Int
+  version      Int
+  html         String
+  isPublished  Boolean   @default(true)
+  legacyItemId Int?      @unique
+  createdAt    DateTime  @default(now())
+  createdById  Int?
+  block        HtmlBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  @@index([blockId, version])
+}
+
+model PageMeta {
+  id                 Int     @id @default(autoincrement())
+  routeKey           String
+  lang               Lang
+  title              String
+  description        String?
+  keywords           String?
+  headHtml           String?
+  externalUrl        String?
+  inMenu             Boolean @default(true)
+  requiredPermission String?
+  legacyTabId        Int?    @unique
+  legacyName         String?
+
+  @@unique([routeKey, lang])
+}
+
+// ───────────────────────────── Forms (DigForm parity) ─────────────────────────────
+
+enum FieldType {
+  DATE
+  TEXT
+  TEXTAREA
+  DROPDOWN
+  EMAIL
+  FILE
+  RADIO
+  HEADING
+}
+
+enum Sensitivity {
+  NONE
+  PII
+  ENCRYPTED
+}
+
+enum EmailActionKind {
+  NOTIFY
+  CONFIRM
+}
+
+model Form {
+  id             Int               @id @default(autoincrement())
+  key            String            @unique
+  lang           Lang
+  title          String
+  legacyModuleId Int?              @unique
+  isOpen         Boolean           @default(true)
+  isBackup       Boolean           @default(false)
+  settings       Json              @default("{}")
+  fields         FormField[]
+  actions        FormEmailAction[]
+  submissions    Submission[]
+  notices        ConsentNotice[]
+}
+
+model FormField {
+  id            Int               @id @default(autoincrement())
+  formId        Int
+  legacyFieldId Int?              @unique
+  code          String
+  type          FieldType
+  label         String
+  help          String?
+  info          String?
+  required      Boolean           @default(false)
+  sortOrder     Int               @default(0)
+  options       Json? // string[] for DROPDOWN/RADIO
+  properties    Json? // remaining legacy properties (max length, accepted types…)
+  sensitivity   Sensitivity       @default(NONE)
+  form          Form              @relation(fields: [formId], references: [id], onDelete: Cascade)
+  values        SubmissionValue[]
+
+  @@unique([formId, code])
+}
+
+model FormEmailAction {
+  id          Int             @id @default(autoincrement())
+  formId      Int
+  legacyId    Int?            @unique
+  kind        EmailActionKind
+  toAddresses String? // NOTIFY: comma-separated addresses
+  toFieldCode String? // CONFIRM: email field of the applicant
+  subject     String
+  bodyHtml    String          @default("")
+  enabled     Boolean         @default(false)
+  form        Form            @relation(fields: [formId], references: [id], onDelete: Cascade)
+}
+
+model ConsentNotice {
+  id          Int          @id @default(autoincrement())
+  formId      Int
+  lang        Lang
+  version     Int
+  text        String
+  publishedAt DateTime     @default(now())
+  form        Form         @relation(fields: [formId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+
+  @@unique([formId, lang, version])
+}
+
+enum ConsentSource {
+  NONE_LEGACY
+  FORM
+}
+
+model Submission {
+  id              Int               @id @default(autoincrement())
+  formId          Int
+  legacyItemId    Int?              @unique
+  lang            Lang
+  attachmentKey   String?
+  consentNoticeId Int?
+  consentAt       DateTime?
+  consentSource   ConsentSource     @default(FORM)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now())
+  updatedById     Int?
+  deletedAt       DateTime?
+  form            Form              @relation(fields: [formId], references: [id])
+  consentNotice   ConsentNotice?    @relation(fields: [consentNoticeId], references: [id])
+  values          SubmissionValue[]
+
+  @@index([formId, createdAt])
+}
+
+model SubmissionValue {
+  id           Int        @id @default(autoincrement())
+  submissionId Int
+  fieldId      Int
+  valueText    String?
+  valueDate    DateTime?
+  valueNumber  Decimal?
+  valueEnc     Bytes? // AES-256-GCM ciphertext (iv|tag|data) for ENCRYPTED fields; valueText stays null
+  encKid       String?
+  fileId       Int?
+  file         File?      @relation(fields: [fileId], references: [id], onDelete: Restrict) // applicant files are never removed under an answer
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  field        FormField  @relation(fields: [fieldId], references: [id])
+
+  @@unique([submissionId, fieldId])
+  @@index([fileId])
+}
+
+// ───────────────────────────── Contact (DNN Feedback parity) ─────────────────────────────
+
+model ContactMessage {
+  id             Int       @id @default(autoincrement())
+  legacyId       Int?      @unique
+  lang           Lang
+  legacyModuleId Int?
+  name           String?
+  email          String
+  phone          String?
+  street         String?
+  city           String?
+  country        String?
+  subject        String?
+  message        String
+  legacyStatus   Int?
+  spamFlag       Boolean   @default(false)
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime?
+
+  @@index([createdAt])
+}
+
+// ───────────────────────────── URLs, settings, flags, audit ─────────────────────────────
+
+enum RedirectSource {
+  TAB
+  PAGE
+  MANUAL
+}
+
+model Redirect {
+  id        Int            @id @default(autoincrement())
+  fromPath  String         @unique // normalised: NFC, lower-case, no trailing slash
+  toPath    String?
+  code      Int            @default(301)
+  source    RedirectSource
+  hits      Int            @default(0)
+  lastHitAt DateTime?
+}
+
+// Legacy EasyDNNNews friendly-URL registry (articles, categories, authors, RSS). Resolved by pattern at runtime.
+model LegacyUrl {
+  id         Int    @id // EasyDNNnewsUrlNewProviderData.ID
+  linkType   Int // 0 article, 1 category, 2 author, 8 rss
+  tabId      Int
+  moduleId   Int?
+  articleId  Int?
+  categoryId Int?
+  authorId   Int?
+  slug       String
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model FeatureFlag {
+  key         String   @id
+  enabled     Boolean  @default(false)
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  at         DateTime @default(now())
+  actorId    Int?
+  action     String
+  entityType String
+  entityId   String?
+  reason     String?
+  ip         String?
+  userAgent  String?
+  meta       Json?
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([at])
+}
+
+model MigrationRun {
+  id         Int       @id @default(autoincrement())
+  step       String
+  status     String
+  counts     Json?
+  message    String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+}
